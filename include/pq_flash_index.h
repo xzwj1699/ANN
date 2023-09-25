@@ -15,6 +15,8 @@
 #include "scratch.h"
 #include "tsl/robin_map.h"
 #include "tsl/robin_set.h"
+#include <bits/stdint-uintn.h>
+#include <mutex>
 
 #define FULL_PRECISION_REORDER_MULTIPLIER 3
 
@@ -94,6 +96,16 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
 
     DISKANN_DLLEXPORT diskann::Metric get_metric();
 
+    DISKANN_DLLEXPORT void add_cache_hit(uint32_t id, bool cached);
+
+    DISKANN_DLLEXPORT void add_cache_miss(uint32_t id, bool cached);
+
+    DISKANN_DLLEXPORT void clear_cache_data();
+
+    DISKANN_DLLEXPORT void dump_cache_data_file(std::string filename);
+
+    DISKANN_DLLEXPORT double calculate_best_static_cache_hit_ratio(uint32_t cache_num);
+
   protected:
     DISKANN_DLLEXPORT void use_medoids_data_as_centroids();
     DISKANN_DLLEXPORT void setup_thread_data(uint64_t nthreads, uint64_t visited_reserve = 4096);
@@ -172,6 +184,14 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     // nhood_cache
     unsigned *nhood_cache_buf = nullptr;
     tsl::robin_map<uint32_t, std::pair<uint32_t, uint32_t *>> nhood_cache;
+
+    std::mutex last_visited_lock;
+    uint32_t last_visited_vector_id;
+    float *last_visited_vector;
+
+    // nhood_cache hit number statistics
+    std::mutex nhood_cache_statistics_lock;
+    tsl::robin_map<uint32_t, std::pair<bool, uint32_t>> nhood_cache_statistics;
 
     // coord_cache
     T *coord_cache_buf = nullptr;

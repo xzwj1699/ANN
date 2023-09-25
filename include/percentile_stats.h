@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <bits/stdint-uintn.h>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
@@ -12,6 +13,7 @@
 #endif
 #include <string>
 #include <vector>
+#include <map>
 
 #include "distance.h"
 #include "parameters.h"
@@ -32,7 +34,20 @@ struct QueryStats
     unsigned n_cmps_saved = 0; // # cmps saved
     unsigned n_cmps = 0;       // # cmps
     unsigned n_cache_hits = 0; // # cache_hits
+    unsigned n_cache_miss = 0; // # cache_miss
     unsigned n_hops = 0;       // # search hops
+    std::vector<uint64_t> visited_block_id;
+    // std::map<unsigned int, uint32_t> first_layer_visit_count;
+
+    QueryStats() {
+        visited_block_id = {};
+        // first_layer_visit_count = {};
+    }
+    ~QueryStats() {
+        // delete visited_block_id;
+        // delete first_layer_visit_count;
+    }
+    // std::pair<uint32_t, uint32_t> n_hit_miss = std::make_pair<uint32_t, uint32_t>(0, 0);
 };
 
 template <typename T>
@@ -62,4 +77,44 @@ inline double get_mean_stats(QueryStats *stats, uint64_t len, const std::functio
     }
     return avg / len;
 }
+
+template <typename T>
+inline double get_ratio(QueryStats *stats, uint64_t len, const std::function<T(const QueryStats &)> &member_fn_1, const std::function<T(const QueryStats &)> &member_fn_2)
+{
+    uint64_t hit = 0, miss = 0;
+    for (uint64_t i = 0; i < len; i++) {
+        hit += member_fn_1(stats[i]);
+        miss += member_fn_2(stats[i]);
+    }
+    return hit * 1.0 / (hit + miss);
+}
+
+template <typename T>
+inline std::map<unsigned int, uint32_t> get_merged_count(QueryStats *stats, uint64_t len)
+{
+    std::map<unsigned int, uint32_t> count;
+    // for (uint64_t i = 0; i < len; i++) {
+    //     for (auto &x: stats[i].first_layer_visit_count) {
+    //         if (count.find(x.first) == count.end()) {
+    //             count[x.first] = x.second;
+    //         } else {
+    //             count[x.first] = count[x.first] + x.second;
+    //         }
+    //     }
+    // }
+    return count;
+}
+
+template <typename T>
+inline std::vector<std::pair<uint64_t, uint64_t>> get_merged_visited_blocks(QueryStats *states, uint64_t len)
+{
+    std::vector<std::pair<uint64_t, uint64_t>> res;
+    for (uint64_t i = 0; i < len; i++) {
+        for (auto k: states[i].visited_block_id) {
+            res.push_back({i, k});
+        }
+    }
+    return res;
+}
+
 } // namespace diskann

@@ -149,12 +149,12 @@ void LinuxAlignedFileReader::register_thread()
         lk.unlock();
         assert(errno != EAGAIN);
         assert(errno != ENOMEM);
-        std::cerr << "io_setup() failed; returned " << ret << ", errno=" << errno << ":" << ::strerror(errno)
+        std::cerr << "io_setup() failed; returned " << ret << ", errno=" << errno << ":" << ::strerror(errno) << " id: " << my_id
                   << std::endl;
     }
     else
     {
-        diskann::cout << "allocating ctx: " << ctx << " to thread-id:" << my_id << std::endl;
+        // diskann::cout << "allocating ctx: " << ctx << " to thread-id:" << my_id << std::endl;
         ctx_map[my_id] = ctx;
     }
     lk.unlock();

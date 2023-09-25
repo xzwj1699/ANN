@@ -2,6 +2,10 @@
 // Licensed under the MIT license.
 
 #include "common_includes.h"
+#include <algorithm>
+#include <bits/stdint-uintn.h>
+#include <cstddef>
+#include <fstream>
 
 #if defined(RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
 #include "gperftools/malloc_extension.h"
@@ -18,6 +22,11 @@
 #include "pq_flash_index.h"
 #include "timer.h"
 #include "tsl/robin_set.h"
+#include <stdlib.h>
+#include <map>
+#include <stack>
+#include <queue>
+#include <set>
 
 namespace diskann
 {
@@ -928,6 +937,10 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
     output_file_meta.push_back(vamana_frozen_num);
     output_file_meta.push_back(vamana_frozen_loc);
     output_file_meta.push_back((uint64_t)append_reorder_data);
+    std::ofstream output_offsets;
+    std::ofstream new_offsets;
+    output_offsets.open("offset.txt", std::ios::out);
+    new_offsets.open("new_offset.txt", std::ios::out);
     if (append_reorder_data)
     {
         output_file_meta.push_back(n_sectors + 1);
@@ -941,6 +954,9 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
     std::unique_ptr<T[]> cur_node_coords = std::make_unique<T[]>(ndims_64);
     diskann::cout << "# sectors: " << n_sectors << std::endl;
     uint64_t cur_node_id = 0;
+    std::cout << "Number of points:" << npts_64 << std::endl;
+
+    std::vector<std::vector<uint32_t>> ngraph;
     for (uint64_t sector = 0; sector < n_sectors; sector++)
     {
         if (sector % 100000 == 0)
@@ -958,12 +974,38 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
             assert(nnbrs > 0);
             assert(nnbrs <= width_u32);
 
+            // if (cur_node_id < npts_64 && new_id.find(cur_node_id) == new_id.end()) {
+            //     new_id.emplace(std::pair<uint32_t, uint32_t>(cur_node_id, current_id));
+            //     current_id++;
+            // }
+
             // read node's nhood
             vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
             if (nnbrs > width_u32)
             {
                 vamana_reader.seekg((nnbrs - width_u32) * sizeof(uint32_t), vamana_reader.cur);
             }
+            if (cur_node_id % 10000 == 0) {
+                auto progress = cur_node_id * 1.0 / npts_64 * 100;
+                std::cout << '\r' << progress << "%" << std::flush;
+            }
+            std::vector<uint32_t> tmp_v;
+            for (int i = 0; i < nnbrs; i++) {
+                // if (i == 0 && sector % 10000 == 0) {
+                    // std::cout << nnbrs << " " << ((uint32_t*)nhood_buf)[0] << std::endl;
+                // }
+                uint32_t index = ((uint32_t*)nhood_buf)[i];
+                tmp_v.push_back(index);
+                // if (cur_node_id < npts_64 && new_id.find(index) == new_id.end()) {
+                //     new_id.emplace(std::pair<uint32_t, uint32_t>(index, current_id));
+                //     current_id++;
+                // }
+                int offset = index - cur_node_id;
+                output_offsets << offset << std::endl;
+                // int new_offset = new_id[cur_node_id] - new_id[index];
+                // new_offsets << new_offset << std::endl;
+            }
+            ngraph.push_back(tmp_v);
 
             // write coords of node first
             //  T *node_coords = data + ((uint64_t) ndims_64 * cur_node_id);
@@ -987,6 +1029,56 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
         // flush sector to disk
         diskann_writer.write(sector_buf.get(), SECTOR_LEN);
     }
+    
+    output_offsets.close();
+
+    uint64_t current_id = 0;
+    std::map<uint64_t, uint64_t> new_id;
+    std::queue<uint64_t> working_list;
+    std::set<uint64_t> visited;
+    working_list.push(0);
+    visited.insert(0);
+    std::cout << "start reassign number" << std::endl;
+    while (! working_list.empty()) {
+        auto top = working_list.front();
+        working_list.pop();
+        // if (new_id.find(top) == new_id.end()) {
+            new_id.emplace(std::pair<uint64_t, uint64_t>(top, current_id));
+            current_id++;
+        // }
+        if (current_id % 10000 == 0) {
+            auto progress = current_id * 1.0 / npts_64 * 100;
+            std::cout << '\r' << progress << "%" << std::flush;
+        }
+        if (current_id + working_list.size() == npts_64) continue;
+        for (auto nbr: ngraph[top]) {
+            if (visited.find(nbr) == visited.end()) {
+                working_list.push(nbr);
+                visited.insert(nbr);
+            }
+        }
+    }
+    std::cout << "start calculating offset" << std::endl;
+    for (int i = 0; i < npts_64; i++) {
+        if (i % 10000 == 0) {
+            auto progess = i * 1.0 / npts_64 * 100;
+            std::cout << '\r' << progess << "%" << std::flush;
+        }
+        std::vector<uint64_t> new_neighbors;
+        for (auto x: ngraph[i]) {
+            new_neighbors.push_back(x);
+        }
+        std::sort(new_neighbors.begin(), new_neighbors.end());
+        int last_used = new_id[i];
+        for (auto x: new_neighbors) {
+            int new_offset = new_id[x] - last_used;
+            new_offsets << new_offset << std::endl;
+            last_used = new_id[x];
+        }
+    }
+
+    new_offsets.close();
+
     if (append_reorder_data)
     {
         diskann::cout << "Index written. Appending reorder data..." << std::endl;

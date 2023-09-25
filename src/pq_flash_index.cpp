@@ -6,12 +6,18 @@
 #include "timer.h"
 #include "pq_flash_index.h"
 #include "cosine_similarity.h"
+#include "utils.h"
+#include <bits/stdint-uintn.h>
+#include <cassert>
+#include <utility>
 
 #ifdef _WINDOWS
 #include "windows_aligned_file_reader.h"
 #else
 #include "linux_aligned_file_reader.h"
 #endif
+
+#include <map>
 
 #define READ_U64(stream, val) stream.read((char *)&val, sizeof(uint64_t))
 #define READ_U32(stream, val) stream.read((char *)&val, sizeof(uint32_t))
@@ -449,6 +455,9 @@ template <typename T, typename LabelT> void PQFlashIndex<T, LabelT>::use_medoids
         aligned_free(centroid_data);
     alloc_aligned(((void **)&centroid_data), num_medoids * aligned_dim * sizeof(float), 32);
     std::memset(centroid_data, 0, num_medoids * aligned_dim * sizeof(float));
+
+    alloc_aligned(((void **)&last_visited_vector), aligned_dim * sizeof(float), 32);
+    std::memset(last_visited_vector, 0, aligned_dim * sizeof(float));
 
     // borrow ctx
     ScratchStoreManager<SSDThreadData<T>> manager(this->thread_data);
@@ -1232,6 +1241,7 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
     float best_dist = (std::numeric_limits<float>::max)();
     if (!use_filter)
     {
+        /** Find a nearest medoid from all medoids **/
         for (uint64_t cur_m = 0; cur_m < num_medoids; cur_m++)
         {
             float cur_expanded_dist =
@@ -1284,6 +1294,14 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
     frontier_read_reqs.reserve(2 * beam_width);
     std::vector<std::pair<uint32_t, std::pair<uint32_t, uint32_t *>>> cached_nhoods;
     cached_nhoods.reserve(2 * beam_width);
+    auto first_layer_points = nhood_cache.find(best_medoid)->second;
+    auto first_layer_number = first_layer_points.first;
+    auto first_layer_nnbrs = first_layer_points.second;
+    // std::map<unsigned int, uint32_t> first_layer_visit_count;
+    // for (int i = 0; i < first_layer_number; i++) {
+    //     if (stats == nullptr) continue;
+    //     stats->first_layer_visit_count.insert(std::make_pair(first_layer_nnbrs[i], 0));
+    // }
 
     while (retset.has_unexpanded_node() && num_ios < io_limit)
     {
@@ -1299,10 +1317,17 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
         {
             auto nbr = retset.closest_unexpanded();
             num_seen++;
+            // if (stats != nullptr) {
+            //     auto it = stats->first_layer_visit_count.find(nbr.id);
+            //     if (it != stats->first_layer_visit_count.end()) {
+            //         it->second = it->second + 1;
+            //     }
+            // }
             auto iter = nhood_cache.find(nbr.id);
             if (iter != nhood_cache.end())
             {
                 cached_nhoods.push_back(std::make_pair(nbr.id, iter->second));
+                add_cache_hit(nbr.id, true);
                 if (stats != nullptr)
                 {
                     stats->n_cache_hits++;
@@ -1311,6 +1336,11 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
             else
             {
                 frontier.push_back(nbr.id);
+                add_cache_miss(nbr.id, false);
+                if (stats != nullptr)
+                {
+                    stats->n_cache_miss++;
+                }
             }
             if (this->count_visited_nodes)
             {
@@ -1334,6 +1364,7 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
                 frontier_read_reqs.emplace_back(NODE_SECTOR_NO(((size_t)id)) * SECTOR_LEN, SECTOR_LEN, fnhood.second);
                 if (stats != nullptr)
                 {
+                    stats->visited_block_id.push_back(NODE_SECTOR_NO(((size_t)id)));
                     stats->n_4k++;
                     stats->n_ios++;
                 }
@@ -1529,6 +1560,11 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
         std::sort(full_retset.begin(), full_retset.end());
     }
 
+    // last_visited_lock.lock();
+    // last_visited_vector_id = (uint32_t)(full_retset[0].id);
+    
+    // last_visited_lock.unlock();
+
     // copy k_search values
     for (uint64_t i = 0; i < k_search; i++)
     {
@@ -1635,6 +1671,60 @@ template <typename T, typename LabelT> char *PQFlashIndex<T, LabelT>::getHeaderB
     return (char *)readReq.buf;
 }
 #endif
+
+template <typename T, typename LabelT>
+void PQFlashIndex<T, LabelT>::add_cache_hit(uint32_t data, bool cached) {
+    nhood_cache_statistics_lock.lock();
+    if (nhood_cache_statistics.find(data) !=  nhood_cache_statistics.end()) {
+        nhood_cache_statistics[data] = std::pair<bool, uint32_t>(nhood_cache_statistics[data].first, nhood_cache_statistics[data].second + 1);
+    } else {
+        nhood_cache_statistics[data] = std::pair<bool, uint32_t>(cached, 1);
+    }
+    nhood_cache_statistics_lock.unlock();
+}
+
+template <typename T, typename LabelT>
+void PQFlashIndex<T, LabelT>::add_cache_miss(uint32_t data, bool cached) {
+    nhood_cache_statistics_lock.lock();
+    if (nhood_cache_statistics.find(data) !=  nhood_cache_statistics.end()) {
+        nhood_cache_statistics[data] = std::pair<bool, uint32_t>(nhood_cache_statistics[data].first, nhood_cache_statistics[data].second + 1);
+    } else {
+        nhood_cache_statistics[data] = std::pair<bool, uint32_t>(cached, 1);
+    }
+    nhood_cache_statistics_lock.unlock();
+}
+
+template <typename T, typename LabelT>
+void PQFlashIndex<T, LabelT>::clear_cache_data() {
+    nhood_cache_statistics_lock.lock();
+    nhood_cache_statistics.clear();
+    nhood_cache_statistics_lock.unlock();
+}
+
+template <typename T, typename LabelT>
+void PQFlashIndex<T, LabelT>::dump_cache_data_file(std::string filename) {
+    std::fstream f;
+    f.open(filename, std::ios::out);
+    for (auto x: nhood_cache_statistics) {
+        f << x.first << " " << x.second.first << " " << x.second.second << std::endl;
+    }
+    f.close();
+}
+
+template <typename T, typename LabelT>
+double PQFlashIndex<T, LabelT>::calculate_best_static_cache_hit_ratio(uint32_t cache_num) {
+    std::vector<uint32_t> freqs;
+    for (auto x: nhood_cache_statistics) {
+        freqs.push_back(x.second.second);
+    }
+    size_t hit = 0, total = 0;
+    std::sort(freqs.begin(), freqs.end(), std::greater<uint32_t>());
+    for (size_t i = 0; i < freqs.size(); i++) {
+        if (i < cache_num) hit += freqs[i];
+        total += freqs[i];
+    }
+    return hit * 1.0 / total;
+}
 
 // instantiations
 template class PQFlashIndex<uint8_t>;

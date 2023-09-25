@@ -251,15 +251,15 @@ template <typename T> inline int get_num_parts(const char *filename)
     std::ifstream reader;
     reader.exceptions(std::ios::failbit | std::ios::badbit);
     reader.open(filename, std::ios::binary);
-    std::cout << "Reading bin file " << filename << " ...\n";
+    // std::cout << "Reading bin file " << filename << " ...\n";
     int npts_i32, ndims_i32;
     reader.read((char *)&npts_i32, sizeof(int));
     reader.read((char *)&ndims_i32, sizeof(int));
-    std::cout << "#pts = " << npts_i32 << ", #dims = " << ndims_i32 << std::endl;
+    // std::cout << "#pts = " << npts_i32 << ", #dims = " << ndims_i32 << std::endl;
     reader.close();
     uint32_t num_parts =
         (npts_i32 % PARTSIZE) == 0 ? npts_i32 / PARTSIZE : (uint32_t)std::floor(npts_i32 / PARTSIZE) + 1;
-    std::cout << "Number of parts: " << num_parts << std::endl;
+    // std::cout << "Number of parts: " << num_parts << std::endl;
     return num_parts;
 }
 
@@ -269,7 +269,7 @@ inline void load_bin_as_float(const char *filename, float *&data, size_t &npts, 
     std::ifstream reader;
     reader.exceptions(std::ios::failbit | std::ios::badbit);
     reader.open(filename, std::ios::binary);
-    std::cout << "Reading bin file " << filename << " ...\n";
+    // std::cout << "Reading bin file " << filename << " ...\n";
     int npts_i32, ndims_i32;
     reader.read((char *)&npts_i32, sizeof(int));
     reader.read((char *)&ndims_i32, sizeof(int));
@@ -277,13 +277,13 @@ inline void load_bin_as_float(const char *filename, float *&data, size_t &npts, 
     uint64_t end_id = (std::min)(start_id + PARTSIZE, (uint64_t)npts_i32);
     npts = end_id - start_id;
     ndims = (uint64_t)ndims_i32;
-    std::cout << "#pts in part = " << npts << ", #dims = " << ndims << ", size = " << npts * ndims * sizeof(T) << "B"
-              << std::endl;
+    // std::cout << "#pts in part = " << npts << ", #dims = " << ndims << ", size = " << npts * ndims * sizeof(T) << "B"
+    //           << std::endl;
 
     reader.seekg(start_id * ndims * sizeof(T) + 2 * sizeof(uint32_t), std::ios::beg);
     T *data_T = new T[npts * ndims];
     reader.read((char *)data_T, sizeof(T) * npts * ndims);
-    std::cout << "Finished reading part of the bin file." << std::endl;
+    // std::cout << "Finished reading part of the bin file." << std::endl;
     reader.close();
     data = aligned_malloc<float>(npts * ndims, ALIGNMENT);
 #pragma omp parallel for schedule(dynamic, 32768)
@@ -304,16 +304,16 @@ template <typename T> inline void save_bin(const std::string filename, T *data, 
     std::ofstream writer;
     writer.exceptions(std::ios::failbit | std::ios::badbit);
     writer.open(filename, std::ios::binary | std::ios::out);
-    std::cout << "Writing bin: " << filename << "\n";
+    // std::cout << "Writing bin: " << filename << "\n";
     int npts_i32 = (int)npts, ndims_i32 = (int)ndims;
     writer.write((char *)&npts_i32, sizeof(int));
     writer.write((char *)&ndims_i32, sizeof(int));
-    std::cout << "bin: #pts = " << npts << ", #dims = " << ndims
-              << ", size = " << npts * ndims * sizeof(T) + 2 * sizeof(int) << "B" << std::endl;
+    // std::cout << "bin: #pts = " << npts << ", #dims = " << ndims
+    //           << ", size = " << npts * ndims * sizeof(T) + 2 * sizeof(int) << "B" << std::endl;
 
     writer.write((char *)data, npts * ndims * sizeof(T));
     writer.close();
-    std::cout << "Finished writing bin" << std::endl;
+    // std::cout << "Finished writing bin" << std::endl;
 }
 
 inline void save_groundtruth_as_one_file(const std::string filename, int32_t *data, float *distances, size_t npts,

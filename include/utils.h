@@ -29,6 +29,8 @@ typedef int FileHandle;
 #include "types.h"
 #include <any>
 
+#include <map>
+
 #ifdef EXEC_ENV_OLS
 #include "content_buf.h"
 #include "memory_mapped_files.h"
@@ -394,7 +396,7 @@ template <typename T>
 inline void load_bin(MemoryMappedFiles &files, const std::string &bin_file, T *&data, size_t &npts, size_t &dim,
                      size_t offset = 0)
 {
-    diskann::cout << "Reading bin file " << bin_file.c_str() << " at offset: " << offset << "..." << std::endl;
+    // diskann::cout << "Reading bin file " << bin_file.c_str() << " at offset: " << offset << "..." << std::endl;
     auto fc = files.getContent(bin_file);
 
     uint32_t t_npts, t_dim;
@@ -429,13 +431,13 @@ template <typename T> DISKANN_DLLEXPORT void read_value(AlignedFileReader &reade
 template <typename T>
 inline void load_bin(const std::string &bin_file, T *&data, size_t &npts, size_t &dim, size_t offset = 0)
 {
-    diskann::cout << "Reading bin file " << bin_file.c_str() << " ..." << std::endl;
+    // diskann::cout << "Reading bin file " << bin_file.c_str() << " ..." << std::endl;
     std::ifstream reader;
     reader.exceptions(std::ifstream::failbit | std::ifstream::badbit);
 
     try
     {
-        diskann::cout << "Opening bin file " << bin_file.c_str() << "... " << std::endl;
+        // diskann::cout << "Opening bin file " << bin_file.c_str() << "... " << std::endl;
         reader.open(bin_file, std::ios::binary | std::ios::ate);
         reader.seekg(0);
         load_bin_impl<T>(reader, data, npts, dim, offset);
@@ -444,7 +446,7 @@ inline void load_bin(const std::string &bin_file, T *&data, size_t &npts, size_t
     {
         throw FileException(bin_file, e, __FUNCSIG__, __FILE__, __LINE__);
     }
-    diskann::cout << "done." << std::endl;
+    // diskann::cout << "done." << std::endl;
 }
 
 inline void wait_for_keystroke()
@@ -647,6 +649,13 @@ inline void copy_file(std::string in_file, std::string out_file)
     dest.close();
 }
 
+DISKANN_DLLEXPORT void export_ground_truth_to_file(unsigned num_queries, unsigned *gold_std, unsigned dim_gs, 
+                                          unsigned dim, std::string export_file);
+
+DISKANN_DLLEXPORT void export_counter_to_file(std::map<unsigned int, uint32_t> m, std::string export_file);
+
+DISKANN_DLLEXPORT void export_visited_blocks_to_file(std::vector<std::pair<uint64_t, uint64_t>> v, std::string export_file);
+
 DISKANN_DLLEXPORT double calculate_recall(unsigned num_queries, unsigned *gold_std, float *gs_dist, unsigned dim_gs,
                                           unsigned *our_results, unsigned dim_or, unsigned recall_at);
 
@@ -696,18 +705,18 @@ inline size_t save_bin(const std::string &filename, T *data, size_t npts, size_t
     std::ofstream writer;
     open_file_to_write(writer, filename);
 
-    diskann::cout << "Writing bin: " << filename.c_str() << std::endl;
+    // diskann::cout << "Writing bin: " << filename.c_str() << std::endl;
     writer.seekp(offset, writer.beg);
     int npts_i32 = (int)npts, ndims_i32 = (int)ndims;
     size_t bytes_written = npts * ndims * sizeof(T) + 2 * sizeof(uint32_t);
     writer.write((char *)&npts_i32, sizeof(int));
     writer.write((char *)&ndims_i32, sizeof(int));
-    diskann::cout << "bin: #pts = " << npts << ", #dims = " << ndims << ", size = " << bytes_written << "B"
-                  << std::endl;
+    // diskann::cout << "bin: #pts = " << npts << ", #dims = " << ndims << ", size = " << bytes_written << "B"
+    //               << std::endl;
 
     writer.write((char *)data, npts * ndims * sizeof(T));
     writer.close();
-    diskann::cout << "Finished writing bin." << std::endl;
+    // diskann::cout << "Finished writing bin." << std::endl;
     return bytes_written;
 }
 
@@ -765,7 +774,7 @@ inline void load_aligned_bin(MemoryMappedFiles &files, const std::string &bin_fi
 {
     try
     {
-        diskann::cout << "Opening bin file " << bin_file << " ..." << std::flush;
+        // diskann::cout << "Opening bin file " << bin_file << " ..." << std::flush;
         FileContent fc = files.getContent(bin_file);
         ContentBuf buf((char *)fc._content, fc._size);
         std::basic_istream<char> reader(&buf);

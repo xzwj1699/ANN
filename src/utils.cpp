@@ -3,6 +3,13 @@
 
 #include "utils.h"
 
+#include <bits/stdint-uintn.h>
+#include <cstddef>
+#include <fcntl.h>
+#include <fstream>
+#include <ios>
+#include <map>
+#include <vector>
 #include <stdio.h>
 
 #ifdef EXEC_ENV_OLS
@@ -124,6 +131,48 @@ void normalize_data_file(const std::string &inFileName, const std::string &outFi
     delete[] read_buf;
 
     diskann::cout << "Wrote normalized points to file: " << outFileName << std::endl;
+}
+
+void export_ground_truth_to_file(unsigned num_queries, unsigned *gold_std, unsigned dim_gs, 
+                                 unsigned dim, std::string export_file)
+{
+    std::ofstream of;
+    of.open(export_file, std::ios::out);
+    std::set<uint32_t> gt;
+    std::map<uint32_t, uint32_t> res_count;
+    for (size_t i = 0; i < num_queries; i++) {
+        gt.clear();
+        uint32_t *gt_vec = gold_std + dim_gs * i;
+        gt.insert(gt_vec, gt_vec + dim);
+        for (auto &v: gt) {
+            if (res_count.find(v) != res_count.end()) {
+                res_count[v] = res_count[v] + 1;
+            } else {
+                res_count[v] = 1;
+            }
+        }
+    }
+    for (auto x: res_count) {
+        if (x.second < 10) continue;
+        of << x.first << " " << x.second << std::endl;
+    }
+    of.close();
+}
+
+void export_counter_to_file(std::map<unsigned int, uint32_t> m, std::string export_file) {
+    std::ofstream of;
+    of.open(export_file, std::ios::out);
+    for (auto x: m) {
+        of << x.first << " " << x.second << std::endl;
+    }
+}
+
+void export_visited_blocks_to_file(std::vector<std::pair<uint64_t, uint64_t>> v, std::string export_file) {
+    std::ofstream of;
+    of.open(export_file, std::ios::out);
+    for (auto k: v) {
+        of << k.first << " " << k.second << std::endl;
+    }
 }
 
 double calculate_recall(uint32_t num_queries, uint32_t *gold_std, float *gs_dist, uint32_t dim_gs,

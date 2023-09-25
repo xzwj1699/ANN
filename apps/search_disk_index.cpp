@@ -2,7 +2,9 @@
 // Licensed under the MIT license.
 
 #include "common_includes.h"
+#include <bits/stdint-uintn.h>
 #include <boost/program_options.hpp>
+#include <string>
 
 #include "index.h"
 #include "disk_utils.h"
@@ -13,6 +15,7 @@
 #include "timer.h"
 #include "percentile_stats.h"
 #include "program_options_utils.hpp"
+#include "utils.h"
 
 #ifndef _WINDOWS
 #include <sys/mman.h>
@@ -74,6 +77,8 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
     size_t query_num, query_dim, query_aligned_dim, gt_num, gt_dim;
     diskann::load_aligned_bin<T>(query_file, query, query_num, query_dim, query_aligned_dim);
 
+    std::cout << "total query number: " << query_num << std::endl;
+
     bool filtered_search = false;
     if (!query_filters.empty())
     {
@@ -91,6 +96,8 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
     if (gt_file != std::string("null") && gt_file != std::string("NULL") && file_exists(gt_file))
     {
         diskann::load_truthset(gt_file, gt_ids, gt_dists, gt_num, gt_dim);
+        std::cout << "ground truth ids: " << gt_ids << " ground truth dists: " << gt_dists << " ground truth num: " << gt_num <<
+            " ground truth dim: " << gt_dim << std::endl;
         if (gt_num != query_num)
         {
             diskann::cout << "Error. Mismatch in number of queries and ground truth data" << std::endl;
@@ -177,9 +184,10 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
     diskann::cout.precision(2);
 
     std::string recall_string = "Recall@" + std::to_string(recall_at);
+    std::string hit_ratio_string = "Hit Ratio";
     diskann::cout << std::setw(6) << "L" << std::setw(12) << "Beamwidth" << std::setw(16) << "QPS" << std::setw(16)
                   << "Mean Latency" << std::setw(16) << "99.9 Latency" << std::setw(16) << "Mean IOs" << std::setw(16)
-                  << "CPU (s)";
+                  << "CPU (s)" << std::setw(16) << hit_ratio_string << std::setw(16) << "Opt Ratio";
     if (calc_recall_flag)
     {
         diskann::cout << std::setw(16) << recall_string << std::endl;
@@ -187,7 +195,8 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
     else
         diskann::cout << std::endl;
     diskann::cout << "==============================================================="
-                     "======================================================="
+                     "==============================================================="
+                     "==================="
                   << std::endl;
 
     std::vector<std::vector<uint32_t>> query_result_ids(Lvec.size());
@@ -269,18 +278,31 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
 
         auto mean_cpuus = diskann::get_mean_stats<float>(stats, query_num,
                                                          [](const diskann::QueryStats &stats) { return stats.cpu_us; });
+        
+        auto cache_hit_ratio = diskann::get_ratio<uint32_t>(stats, query_num,
+                                                         [](const diskann::QueryStats &stats) { return stats.n_cache_hits; },
+                                                         [](const diskann::QueryStats &stats) { return stats.n_cache_miss; });
+        
+        auto best_static_hit_ratio = _pFlashIndex->calculate_best_static_cache_hit_ratio(num_nodes_to_cache);
 
+        // auto first_layer_visit_counter = diskann::get_merged_count<uint32_t>(stats, query_num);
+
+        auto visited_blocks = diskann::get_merged_visited_blocks<uint64_t>(stats, query_num);
+        
         double recall = 0;
         if (calc_recall_flag)
         {
             recall = diskann::calculate_recall((uint32_t)query_num, gt_ids, gt_dists, (uint32_t)gt_dim,
                                                query_result_ids[test_id].data(), recall_at, recall_at);
+            diskann::export_ground_truth_to_file((uint32_t)query_num, gt_ids, (uint32_t)gt_dim, recall_at, "query_res_"+std::to_string(recall));
+            // diskann::export_counter_to_file(first_layer_visit_counter, "counter_"+std::to_string(recall));
+            diskann::export_visited_blocks_to_file(visited_blocks, "visited_"+std::to_string(L));
             best_recall = std::max(recall, best_recall);
         }
 
         diskann::cout << std::setw(6) << L << std::setw(12) << optimized_beamwidth << std::setw(16) << qps
                       << std::setw(16) << mean_latency << std::setw(16) << latency_999 << std::setw(16) << mean_ios
-                      << std::setw(16) << mean_cpuus;
+                      << std::setw(16) << mean_cpuus << std::setw(16) << cache_hit_ratio << std::setw(16) << best_static_hit_ratio;
         if (calc_recall_flag)
         {
             diskann::cout << std::setw(16) << recall << std::endl;
@@ -288,6 +310,8 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
         else
             diskann::cout << std::endl;
         delete[] stats;
+        // _pFlashIndex->dump_cache_data_file("cache_data_" + std::to_string(L) + ".txt");
+        _pFlashIndex->clear_cache_data();
     }
 
     diskann::cout << "Done searching. Now saving results " << std::endl;
